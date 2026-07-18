@@ -4,9 +4,11 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { CartProvider } from "@/components/cart-provider";
 import { WishlistProvider } from "@/components/wishlist-provider";
+import { AuthProvider } from "@/components/auth-provider";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { SITE_URL } from "@/lib/site";
+import { createClient } from "@/lib/supabase/server";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -55,13 +57,20 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // Detect the session on the server so the first paint knows auth state.
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
   return (
     <html lang="en" suppressHydrationWarning className={`${inter.variable} h-full`}>
       <body className="flex min-h-full flex-col">
         <ThemeProvider>
+          <AuthProvider initialSession={session}>
           <WishlistProvider>
             <CartProvider>
               {/* Skip link for keyboard / screen-reader users */}
@@ -78,6 +87,7 @@ export default function RootLayout({
               <Footer />
             </CartProvider>
           </WishlistProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

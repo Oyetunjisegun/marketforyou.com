@@ -114,3 +114,15 @@ export interface CartLine {
   sellerHandle: string;
   variant?: Record<string, string>;
 }
+
+/** Lifecycle of a whole order, mirroring the order_status enum in the DB. */
+export type OrderStatus =
+  | "pending"
+  | "paid"
+  | "shipped"
+  | "delivered"
+  | "cancelled"
+  | "refunded";
+
+/** Per-line fulfillment a seller controls, mirroring fulfillment_status in the DB. */
+export type FulfillmentStatus = "unfulfilled" | "shipped" | "delivered";

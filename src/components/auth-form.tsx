@@ -1,32 +1,74 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Mail, Lock, User, Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
+import { createClient } from "@/lib/supabase/client";
 
-/** OAuth providers wired through the auth service (seam only in this build). */
+/** OAuth providers wired through Supabase (enable each in the dashboard first). */
 const OAUTH = [
   { id: "google", label: "Google" },
   { id: "apple", label: "Apple" },
   { id: "facebook", label: "Facebook" },
-];
+] as const;
 
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const isRegister = mode === "register";
+  const router = useRouter();
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     setLoading(true);
-    // Seam: POST /api/v1/auth/{login|register}. Mocked with a short delay.
-    setTimeout(() => {
+
+    const form = new FormData(e.currentTarget);
+    const email = String(form.get("email") ?? "").trim();
+    const password = String(form.get("password") ?? "");
+    const fullName = String(form.get("name") ?? "").trim();
+    const supabase = createClient();
+
+    try {
+      if (isRegister) {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: fullName } },
+        });
+        if (error) throw error;
+        // If email confirmation is on, there's no session yet.
+        if (!data.session) {
+          setNotice("Check your email to confirm your account, then sign in.");
+          setLoading(false);
+          return;
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+      // Success with a live session: refresh so the server re-reads auth state.
+      router.push("/account");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong. Try again.");
       setLoading(false);
-      setError("Auth backend not connected in this demo build.");
-    }, 900);
+    }
+  }
+
+  async function oauth(provider: (typeof OAUTH)[number]["id"]) {
+    setError(null);
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+    if (error) setError(error.message);
   }
 
   return (
@@ -43,7 +85,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             <button
               key={p.id}
               type="button"
-              onClick={() => setError("Social sign-in not connected in this demo build.")}
+              onClick={() => oauth(p.id)}
               className="rounded-lg border border-border py-2.5 text-sm font-medium hover:bg-surface-2"
             >
               {p.label}
@@ -94,6 +136,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           {error && (
             <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
               {error}
+            </p>
+          )}
+          {notice && (
+            <p className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary" role="status">
+              {notice}
             </p>
           )}
 

@@ -1,13 +1,17 @@
 import type { Product, Seller } from "./types";
-import { PRODUCTS, SELLERS } from "./mock-data";
+import { supabaseAnon } from "./supabase/anon";
+import { mapProduct, mapSeller, PRODUCT_SELECT, type ProductRowFull } from "./supabase/map";
 
 /**
- * Data-access layer. Today it reads from the in-memory mock dataset; when the
- * NestJS backend is live, replace each function body with a `fetch()` to the
- * corresponding REST endpoint (see docs/ARCHITECTURE.md). The signatures are
- * intentionally async so callers don't change.
+ * Data-access layer, backed by Supabase (PostgreSQL).
  *
- * e.g. getProductBySlug -> GET /api/v1/products/:slug
+ * Reads use a session-less anon client (supabase/anon.ts); the catalog is
+ * world-readable via Row Level Security, so these work in both Server and
+ * Client Components. Filtering, sorting, and pagination are pushed down into
+ * SQL rather than done in JS, so this scales past the demo dataset.
+ *
+ * The function signatures are unchanged from the original mock layer, so no
+ * page or component needed to change when we swapped the data source.
  */
 
 export interface ProductQuery {
@@ -44,78 +48,127 @@ export async function getProducts(query: ProductQuery = {}): Promise<Paginated<P
     pageSize = 24,
   } = query;
 
-  let items = PRODUCTS.slice();
+  let builder = supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT, { count: "exact" });
 
-  if (category) items = items.filter((p) => p.categorySlug === category);
+  if (category) builder = builder.eq("category_slug", category);
   if (q) {
-    const needle = q.toLowerCase();
-    items = items.filter(
-      (p) =>
-        p.title.toLowerCase().includes(needle) ||
-        p.description.toLowerCase().includes(needle) ||
-        p.tags.some((t) => t.toLowerCase().includes(needle)) ||
-        p.seller.displayName.toLowerCase().includes(needle),
-    );
+    // Match against title or description. tags/seller matching would need an
+    // RPC or full-text index; title+description covers the common case.
+    const needle = `%${q}%`;
+    builder = builder.or(`title.ilike.${needle},description.ilike.${needle}`);
   }
-  if (typeof minPrice === "number") items = items.filter((p) => p.price >= minPrice);
-  if (typeof maxPrice === "number") items = items.filter((p) => p.price <= maxPrice);
-  if (condition?.length) items = items.filter((p) => condition.includes(p.condition));
-  if (freeShipping) items = items.filter((p) => p.freeShipping);
-  if (listingType) items = items.filter((p) => p.listingType === listingType);
+  if (typeof minPrice === "number") builder = builder.gte("price", minPrice);
+  if (typeof maxPrice === "number") builder = builder.lte("price", maxPrice);
+  if (condition?.length) {
+    builder = builder.in("condition", condition as Product["condition"][]);
+  }
+  if (freeShipping) builder = builder.eq("free_shipping", true);
+  if (listingType) {
+    builder = builder.eq("listing_type", listingType as Product["listingType"]);
+  }
 
   switch (sort) {
     case "price-asc":
-      items.sort((a, b) => a.price - b.price);
+      builder = builder.order("price", { ascending: true });
       break;
     case "price-desc":
-      items.sort((a, b) => b.price - a.price);
+      builder = builder.order("price", { ascending: false });
       break;
     case "newest":
-      items.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+      builder = builder.order("created_at", { ascending: false });
       break;
     case "rating":
-      items.sort((a, b) => b.rating - a.rating);
+      builder = builder.order("rating", { ascending: false });
       break;
     default:
-      // relevance: sponsored + featured float up
-      items.sort(
-        (a, b) =>
-          Number(b.isSponsored) - Number(a.isSponsored) ||
-          Number(b.isFeatured) - Number(a.isFeatured) ||
-          b.rating - a.rating,
-      );
+      // relevance: sponsored + featured float up, then rating.
+      builder = builder
+        .order("is_sponsored", { ascending: false })
+        .order("is_featured", { ascending: false })
+        .order("rating", { ascending: false });
   }
 
-  const total = items.length;
   const start = (page - 1) * pageSize;
+  builder = builder.range(start, start + pageSize - 1);
+
+  const { data, count, error } = await builder;
+  if (error) throw error;
+
   return {
-    items: items.slice(start, start + pageSize),
-    total,
+    items: (data as unknown as ProductRowFull[]).map(mapProduct),
+    total: count ?? 0,
     page,
     pageSize,
   };
 }
 
 export async function getProductBySlug(slug: string): Promise<Product | null> {
-  return PRODUCTS.find((p) => p.slug === slug) ?? null;
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .eq("slug", slug)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? mapProduct(data as unknown as ProductRowFull) : null;
+}
+
+/** Look up a product by id (UUID) or, failing that, by slug. Used by the editor. */
+export async function getProductBySlugOrId(idOrSlug: string): Promise<Product | null> {
+  const column = UUID_RE.test(idOrSlug) ? "id" : "slug";
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .eq(column, idOrSlug)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? mapProduct(data as unknown as ProductRowFull) : null;
 }
 
 export async function getFeaturedProducts(limit = 8): Promise<Product[]> {
-  return PRODUCTS.filter((p) => p.isFeatured).slice(0, limit);
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .eq("is_featured", true)
+    .limit(limit);
+  if (error) throw error;
+  return (data as unknown as ProductRowFull[]).map(mapProduct);
 }
 
 export async function getSponsoredProducts(limit = 4): Promise<Product[]> {
-  return PRODUCTS.filter((p) => p.isSponsored).slice(0, limit);
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .eq("is_sponsored", true)
+    .limit(limit);
+  if (error) throw error;
+  return (data as unknown as ProductRowFull[]).map(mapProduct);
 }
 
 export async function getTrendingProducts(limit = 12): Promise<Product[]> {
-  return PRODUCTS.slice()
-    .sort((a, b) => b.ratingCount - a.ratingCount)
-    .slice(0, limit);
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .order("rating_count", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data as unknown as ProductRowFull[]).map(mapProduct);
 }
 
 export async function getDeals(limit = 8): Promise<Product[]> {
-  return PRODUCTS.filter((p) => p.originalPrice && p.originalPrice > p.price)
+  // Products with a real discount. We over-fetch rows that have an
+  // original_price, then rank by discount ratio in JS (Supabase can't order by
+  // a computed expression without an RPC) and take the top `limit`.
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .not("original_price", "is", null)
+    .limit(200);
+  if (error) throw error;
+  return (data as unknown as ProductRowFull[])
+    .map(mapProduct)
+    .filter((p) => p.originalPrice && p.originalPrice > p.price)
     .sort(
       (a, b) =>
         (b.originalPrice! - b.price) / b.originalPrice! -
@@ -126,49 +179,90 @@ export async function getDeals(limit = 8): Promise<Product[]> {
 
 /** "Similar products" — same category, excluding the current item. */
 export async function getRelatedProducts(product: Product, limit = 6): Promise<Product[]> {
-  return PRODUCTS.filter(
-    (p) => p.categorySlug === product.categorySlug && p.id !== product.id,
-  ).slice(0, limit);
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .eq("category_slug", product.categorySlug)
+    .neq("id", product.id)
+    .limit(limit);
+  if (error) throw error;
+  return (data as unknown as ProductRowFull[]).map(mapProduct);
 }
 
 export async function getFeaturedSellers(limit = 6): Promise<Seller[]> {
-  return SELLERS.filter((s) => s.isFeatured).slice(0, limit);
+  const { data, error } = await supabaseAnon
+    .from("sellers")
+    .select("*")
+    .eq("is_featured", true)
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map(mapSeller);
 }
 
 export async function getSellerByHandle(handle: string): Promise<Seller | null> {
-  return SELLERS.find((s) => s.handle === handle) ?? null;
+  const { data, error } = await supabaseAnon
+    .from("sellers")
+    .select("*")
+    .eq("handle", handle)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? mapSeller(data) : null;
 }
 
 export async function getProductsBySeller(handle: string): Promise<Product[]> {
-  return PRODUCTS.filter((p) => p.seller.handle === handle);
+  // Resolve the seller id first, then its products.
+  const { data: seller, error: sErr } = await supabaseAnon
+    .from("sellers")
+    .select("id")
+    .eq("handle", handle)
+    .maybeSingle();
+  if (sErr) throw sErr;
+  if (!seller) return [];
+
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .eq("seller_id", seller.id);
+  if (error) throw error;
+  return (data as unknown as ProductRowFull[]).map(mapProduct);
 }
 
 /**
- * Lightweight search-suggestion endpoint. In production this is where the
- * AI-powered / Meilisearch autocomplete lands (see docs). For now it does a
- * prefix/contains match over titles, categories, and sellers.
+ * Lightweight search-suggestion endpoint: prefix/contains match over titles.
+ * (AI/Meilisearch autocomplete can replace this later.)
  */
 export async function getSearchSuggestions(q: string, limit = 6): Promise<string[]> {
   if (!q.trim()) return [];
-  const needle = q.toLowerCase();
-  const set = new Set<string>();
-  for (const p of PRODUCTS) {
-    if (p.title.toLowerCase().includes(needle)) set.add(p.title);
-    if (set.size >= limit) break;
-  }
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select("title")
+    .ilike("title", `%${q}%`)
+    .limit(limit);
+  if (error) throw error;
+  const set = new Set<string>((data ?? []).map((r) => r.title));
   return Array.from(set).slice(0, limit);
 }
 
 /** Resolve a list of product ids (used by the wishlist), preserving order. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export async function getProductsByIds(ids: string[]): Promise<Product[]> {
-  const byId = new Map(PRODUCTS.map((p) => [p.id, p]));
+  // Product ids are UUIDs. Drop anything that isn't (e.g. stale localStorage
+  // entries from the old mock data) so the query can't error on a bad id.
+  const valid = ids.filter((id) => UUID_RE.test(id));
+  if (!valid.length) return [];
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .in("id", valid);
+  if (error) throw error;
+  const products = (data as unknown as ProductRowFull[]).map(mapProduct);
+  const byId = new Map(products.map((p) => [p.id, p]));
   return ids.map((id) => byId.get(id)).filter((p): p is Product => Boolean(p));
 }
 
 /**
  * AI-assisted listing copy. Seam for a Claude-backed endpoint
- * (POST /api/v1/ai/listing-copy) that turns a title into an SEO description.
- * The mock returns deterministic, templated copy so the UX is demonstrable.
+ * (POST /api/v1/ai/listing-copy). Still a deterministic mock — no DB involved.
  */
 export async function generateListingCopy(title: string): Promise<string> {
   await new Promise((r) => setTimeout(r, 700));

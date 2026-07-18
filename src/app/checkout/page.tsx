@@ -2,56 +2,60 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CreditCard, Wallet, Landmark, Lock, CheckCircle2 } from "lucide-react";
+import { Lock, Wallet } from "lucide-react";
 import { useCart } from "@/components/cart-provider";
+import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
 import { formatPrice } from "@/lib/format";
+import { usdToNgn } from "@/lib/money";
 import { cn } from "@/lib/cn";
-
-const PROVIDERS = [
-  { id: "stripe", label: "Card", desc: "Visa, Mastercard, Amex via Stripe", icon: CreditCard },
-  { id: "paypal", label: "PayPal", desc: "Pay with your PayPal balance", icon: Wallet },
-  { id: "paystack", label: "Paystack", desc: "Cards & bank transfer (Africa)", icon: Landmark },
-  { id: "flutterwave", label: "Flutterwave", desc: "Mobile money & more", icon: Wallet },
-];
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { lines, subtotal, clear } = useCart();
-  const [provider, setProvider] = useState("stripe");
+  const { lines, subtotal } = useCart();
+  const { user, loading: authLoading } = useAuth();
   const [placing, setPlacing] = useState(false);
-  const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const shipping = subtotal > 0 && subtotal < 50 ? 4.99 : 0;
   const fees = +(subtotal * 0.03).toFixed(2);
   const total = +(subtotal + shipping + fees).toFixed(2);
+  const totalNgn = usdToNgn(total);
 
-  function placeOrder(e: React.FormEvent) {
+  async function placeOrder(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setPlacing(true);
-    // Seam: POST /api/v1/orders then redirect to the chosen provider's hosted
-    // checkout (Stripe Session / PayPal order / Paystack init). Mocked here.
-    setTimeout(() => {
-      clear();
-      setPlacing(false);
-      setDone(true);
-    }, 1200);
-  }
+    setError(null);
 
-  if (done) {
-    return (
-      <div className="mx-auto grid max-w-md place-items-center px-4 py-24 text-center">
-        <CheckCircle2 className="h-16 w-16 text-success" />
-        <h1 className="mt-4 text-2xl font-bold">Order confirmed</h1>
-        <p className="mt-1 text-muted">
-          Thanks for your purchase. A confirmation has been sent to your email, and
-          your funds are held in escrow until delivery is confirmed.
-        </p>
-        <Button size="lg" className="mt-6" onClick={() => router.push("/")}>
-          Continue shopping
-        </Button>
-      </div>
-    );
+    if (!user) {
+      router.push("/login?next=/checkout");
+      return;
+    }
+
+    const form = new FormData(e.currentTarget);
+    setPlacing(true);
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shipping: {
+            name: form.get("name"),
+            email: form.get("email"),
+            phone: form.get("phone"),
+            address: form.get("address"),
+            city: form.get("city"),
+            zip: form.get("zip"),
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Checkout failed.");
+      // Hand off to Flutterwave's hosted checkout.
+      window.location.href = data.paymentLink;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Checkout failed.");
+      setPlacing(false);
+    }
   }
 
   if (lines.length === 0) {
@@ -75,6 +79,14 @@ export default function CheckoutPage() {
             <h2 className="font-semibold">Shipping address</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Full name" name="name" autoComplete="name" required />
+              <Field
+                label="Email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                defaultValue={user?.email ?? ""}
+                required
+              />
               <Field label="Phone" name="phone" type="tel" autoComplete="tel" required />
               <Field label="Address" name="address" autoComplete="street-address" className="sm:col-span-2" required />
               <Field label="City" name="city" autoComplete="address-level2" required />
@@ -85,31 +97,22 @@ export default function CheckoutPage() {
           {/* payment */}
           <section className="space-y-3">
             <h2 className="font-semibold">Payment method</h2>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {PROVIDERS.map((p) => {
-                const Icon = p.icon;
-                return (
-                  <button
-                    type="button"
-                    key={p.id}
-                    onClick={() => setProvider(p.id)}
-                    className={cn(
-                      "flex items-start gap-3 rounded-xl border p-3 text-left transition-colors",
-                      provider === p.id ? "border-primary bg-primary/5" : "border-border hover:border-muted",
-                    )}
-                  >
-                    <Icon className="mt-0.5 h-5 w-5 text-primary" />
-                    <span>
-                      <span className="block text-sm font-medium">{p.label}</span>
-                      <span className="block text-xs text-muted">{p.desc}</span>
-                    </span>
-                  </button>
-                );
-              })}
+            <div
+              className={cn(
+                "flex items-start gap-3 rounded-xl border border-primary bg-primary/5 p-3",
+              )}
+            >
+              <Wallet className="mt-0.5 h-5 w-5 text-primary" />
+              <span>
+                <span className="block text-sm font-medium">Flutterwave</span>
+                <span className="block text-xs text-muted">
+                  Cards, bank transfer, USSD & mobile money
+                </span>
+              </span>
             </div>
             <p className="text-xs text-muted">
-              You&apos;ll be redirected to {PROVIDERS.find((p) => p.id === provider)?.label} to
-              complete payment securely. We never store your card details.
+              You&apos;ll be redirected to Flutterwave to complete payment securely. We never
+              store your card details.
             </p>
           </section>
         </div>
@@ -131,8 +134,15 @@ export default function CheckoutPage() {
             <div className="flex justify-between text-muted"><dt>Service fee</dt><dd className="text-foreground">{formatPrice(fees, "USD")}</dd></div>
             <div className="flex justify-between border-t border-border pt-2 text-base font-bold"><dt>Total</dt><dd>{formatPrice(total, "USD")}</dd></div>
           </dl>
-          <Button type="submit" size="lg" className="w-full" disabled={placing}>
-            <Lock className="h-4 w-4" /> {placing ? "Processing…" : `Pay ${formatPrice(total, "USD")}`}
+          <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
+            You&apos;ll be charged {formatPrice(totalNgn, "NGN")} at today&apos;s rate.
+          </p>
+
+          {error && <p className="text-sm text-danger">{error}</p>}
+
+          <Button type="submit" size="lg" className="w-full" disabled={placing || authLoading}>
+            <Lock className="h-4 w-4" />{" "}
+            {placing ? "Redirecting…" : user ? `Pay ${formatPrice(total, "USD")}` : "Sign in to pay"}
           </Button>
         </aside>
       </div>

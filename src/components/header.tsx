@@ -7,14 +7,26 @@ import { SearchBar } from "./search-bar";
 import { ThemeToggle } from "./theme-toggle";
 import { useCart } from "./cart-provider";
 import { useWishlist } from "./wishlist-provider";
+import { useAuth } from "./auth-provider";
 import { CATEGORIES } from "@/lib/categories";
 import { CategoryIcon } from "./icon";
+import { useRouter } from "next/navigation";
 
 export function Header() {
   const { count } = useCart();
   const { count: wishCount } = useWishlist();
+  const { user, signOut } = useAuth();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [catsOpen, setCatsOpen] = useState(false);
+  const [acctOpen, setAcctOpen] = useState(false);
+
+  async function handleSignOut() {
+    setAcctOpen(false);
+    await signOut();
+    router.push("/");
+    router.refresh();
+  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface/90 backdrop-blur supports-[backdrop-filter]:bg-surface/70">
@@ -62,12 +74,66 @@ export function Header() {
             <ShoppingCart className="h-5 w-5" />
             {count > 0 && <Count>{count}</Count>}
           </Link>
-          <Link
-            href="/login"
-            className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium hover:bg-surface-2 sm:flex"
-          >
-            <User className="h-5 w-5" /> Sign in
-          </Link>
+          {user ? (
+            <div
+              className="relative hidden sm:block"
+              onMouseEnter={() => setAcctOpen(true)}
+              onMouseLeave={() => setAcctOpen(false)}
+            >
+              <Link
+                href="/account"
+                className="flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium hover:bg-surface-2"
+              >
+                <User className="h-5 w-5" />
+                <span className="max-w-[10ch] truncate">
+                  {user.user_metadata?.full_name || user.email?.split("@")[0] || "Account"}
+                </span>
+                <ChevronDown className="h-4 w-4" />
+              </Link>
+              {acctOpen && (
+                <div className="absolute right-0 top-full z-40 w-48 rounded-xl border border-border bg-surface p-1 shadow-xl">
+                  <Link
+                    href="/account"
+                    className="block rounded-lg px-3 py-2 text-sm hover:bg-surface-2"
+                  >
+                    Your account
+                  </Link>
+                  <Link
+                    href="/account/orders"
+                    className="block rounded-lg px-3 py-2 text-sm hover:bg-surface-2"
+                  >
+                    Your orders
+                  </Link>
+                  <Link
+                    href="/dashboard/products"
+                    className="block rounded-lg px-3 py-2 text-sm hover:bg-surface-2"
+                  >
+                    Seller dashboard
+                  </Link>
+                  <Link
+                    href="/wishlist"
+                    className="block rounded-lg px-3 py-2 text-sm hover:bg-surface-2"
+                  >
+                    Wishlist
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    className="block w-full rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-surface-2"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium hover:bg-surface-2 sm:flex"
+            >
+              <User className="h-5 w-5" /> Sign in
+            </Link>
+          )}
           <Link
             href="/sell"
             className="hidden h-10 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary-hover md:flex"
@@ -124,13 +190,23 @@ export function Header() {
         <div className="border-t border-border bg-surface lg:hidden">
           <div className="max-h-[70vh] overflow-y-auto px-4 py-3">
             <div className="mb-3 flex gap-2">
-              <Link
-                href="/login"
-                className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border py-2 text-sm font-medium"
-                onClick={() => setMobileOpen(false)}
-              >
-                <User className="h-4 w-4" /> Sign in
-              </Link>
+              {user ? (
+                <Link
+                  href="/account"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border py-2 text-sm font-medium"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <User className="h-4 w-4" /> Account
+                </Link>
+              ) : (
+                <Link
+                  href="/login"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border py-2 text-sm font-medium"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <User className="h-4 w-4" /> Sign in
+                </Link>
+              )}
               <Link
                 href="/sell"
                 className="flex flex-1 items-center justify-center rounded-lg bg-primary py-2 text-sm font-semibold text-primary-foreground"
@@ -139,6 +215,18 @@ export function Header() {
                 Start selling
               </Link>
             </div>
+            {user && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileOpen(false);
+                  handleSignOut();
+                }}
+                className="mb-3 w-full rounded-lg border border-border py-2 text-sm font-medium text-danger"
+              >
+                Sign out
+              </button>
+            )}
             <p className="px-1 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
               Categories
             </p>
