@@ -199,6 +199,15 @@ export async function getFeaturedSellers(limit = 6): Promise<Seller[]> {
   return (data ?? []).map(mapSeller);
 }
 
+export async function getAllSellers(limit = 10_000): Promise<Seller[]> {
+  const { data, error } = await supabaseAnon
+    .from("sellers")
+    .select("*")
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map(mapSeller);
+}
+
 export async function getSellerByHandle(handle: string): Promise<Seller | null> {
   const { data, error } = await supabaseAnon
     .from("sellers")

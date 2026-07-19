@@ -1,8 +1,18 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "@/lib/site";
 import { CATEGORIES } from "@/lib/categories";
-import { getProducts } from "@/lib/api";
-import { SELLERS } from "@/lib/mock-data";
+import { getProducts, getAllSellers } from "@/lib/api";
+
+/**
+ * The sitemap is generated at build/request time. It pulls products and sellers
+ * from Supabase through the data layer. Each DB read is wrapped so a transient
+ * failure (or missing env at build) degrades to a partial sitemap instead of
+ * failing the whole build ("Failed to collect page data for /sitemap.xml").
+ */
+
+// Re-generate at most once an hour rather than trying to prerender at build,
+// so the sitemap never blocks a deploy on a slow/unavailable database.
+export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
@@ -21,22 +31,32 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }));
 
-  const sellerRoutes: MetadataRoute.Sitemap = SELLERS.map((s) => ({
-    url: `${SITE_URL}/seller/${s.handle}`,
-    lastModified: now,
-    changeFrequency: "weekly",
-    priority: 0.6,
-  }));
+  // Sellers from the database (the mock-data list no longer matches real rows).
+  let sellerRoutes: MetadataRoute.Sitemap = [];
+  try {
+    const sellers = await getAllSellers();
+    sellerRoutes = sellers.map((s) => ({
+      url: `${SITE_URL}/seller/${s.handle}`,
+      lastModified: now,
+      changeFrequency: "weekly",
+      priority: 0.6,
+    }));
+  } catch {
+    // Leave sellers out of this build's sitemap rather than failing the build.
+  }
 
-  // Pull all products through the data layer so this stays correct once the
-  // mock layer is swapped for the real API.
-  const { items } = await getProducts({ pageSize: 10_000 });
-  const productRoutes: MetadataRoute.Sitemap = items.map((p) => ({
-    url: `${SITE_URL}/product/${p.slug}`,
-    lastModified: p.createdAt ? new Date(p.createdAt) : now,
-    changeFrequency: "weekly",
-    priority: 0.9,
-  }));
+  let productRoutes: MetadataRoute.Sitemap = [];
+  try {
+    const { items } = await getProducts({ pageSize: 10_000 });
+    productRoutes = items.map((p) => ({
+      url: `${SITE_URL}/product/${p.slug}`,
+      lastModified: p.createdAt ? new Date(p.createdAt) : now,
+      changeFrequency: "weekly",
+      priority: 0.9,
+    }));
+  } catch {
+    // Same: a DB hiccup shouldn't break the deploy.
+  }
 
   return [...staticRoutes, ...categoryRoutes, ...sellerRoutes, ...productRoutes];
 }
