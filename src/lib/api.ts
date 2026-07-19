@@ -208,6 +208,49 @@ export async function getAllSellers(limit = 10_000): Promise<Seller[]> {
   return (data ?? []).map(mapSeller);
 }
 
+/**
+ * Sellers to include in the sitemap: only active/approved stores. If the
+ * `is_active` column doesn't exist yet (migration not applied), fall back to
+ * all sellers so the sitemap still builds.
+ */
+export async function getSitemapSellers(limit = 10_000): Promise<Seller[]> {
+  const { data, error } = await supabaseAnon
+    .from("sellers")
+    .select("*")
+    .eq("is_active", true)
+    .limit(limit);
+  if (error) {
+    // 42703 = undefined_column — migration not applied yet; degrade gracefully.
+    if (error.code === "42703") return getAllSellers(limit);
+    throw error;
+  }
+  return (data ?? []).map(mapSeller);
+}
+
+/**
+ * Products to include in the sitemap: only published listings. Falls back to
+ * all products if the `status` column doesn't exist yet.
+ */
+export async function getSitemapProducts(limit = 10_000): Promise<{ slug: string; createdAt: string }[]> {
+  const { data, error } = await supabaseAnon
+    .from("products")
+    .select("slug, created_at")
+    .eq("status", "published")
+    .limit(limit);
+  if (error) {
+    if (error.code === "42703") {
+      const { data: all, error: allErr } = await supabaseAnon
+        .from("products")
+        .select("slug, created_at")
+        .limit(limit);
+      if (allErr) throw allErr;
+      return (all ?? []).map((r) => ({ slug: r.slug, createdAt: r.created_at }));
+    }
+    throw error;
+  }
+  return (data ?? []).map((r) => ({ slug: r.slug, createdAt: r.created_at }));
+}
+
 export async function getSellerByHandle(handle: string): Promise<Seller | null> {
   const { data, error } = await supabaseAnon
     .from("sellers")

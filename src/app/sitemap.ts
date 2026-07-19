@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "@/lib/site";
 import { CATEGORIES } from "@/lib/categories";
-import { getProducts, getAllSellers } from "@/lib/api";
+import { getSitemapProducts, getSitemapSellers } from "@/lib/api";
 
 /**
  * The sitemap is generated at build/request time. It pulls products and sellers
@@ -31,10 +31,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }));
 
-  // Sellers from the database (the mock-data list no longer matches real rows).
+  // Only active/approved sellers (drafts/suspended excluded in getSitemapSellers).
   let sellerRoutes: MetadataRoute.Sitemap = [];
   try {
-    const sellers = await getAllSellers();
+    const sellers = await getSitemapSellers();
     sellerRoutes = sellers.map((s) => ({
       url: `${SITE_URL}/seller/${s.handle}`,
       lastModified: now,
@@ -45,10 +45,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Leave sellers out of this build's sitemap rather than failing the build.
   }
 
+  // Only published products (drafts/archived excluded in getSitemapProducts).
   let productRoutes: MetadataRoute.Sitemap = [];
   try {
-    const { items } = await getProducts({ pageSize: 10_000 });
-    productRoutes = items.map((p) => ({
+    const products = await getSitemapProducts();
+    productRoutes = products.map((p) => ({
       url: `${SITE_URL}/product/${p.slug}`,
       lastModified: p.createdAt ? new Date(p.createdAt) : now,
       changeFrequency: "weekly",

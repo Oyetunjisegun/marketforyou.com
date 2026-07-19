@@ -67,15 +67,17 @@ export interface Database {
           joined_at: string;
           is_verified: boolean;
           is_featured: boolean;
+          is_active: boolean;
           total_sales: number | null;
         };
         Insert: Omit<
           Database["public"]["Tables"]["sellers"]["Row"],
-          "id" | "joined_at" | "owner_id"
+          "id" | "joined_at" | "owner_id" | "is_active"
         > & {
           id?: string;
           joined_at?: string;
           owner_id?: string | null;
+          is_active?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["sellers"]["Insert"]>;
         Relationships: [];
@@ -106,6 +108,7 @@ export interface Database {
           is_featured: boolean;
           free_shipping: boolean;
           location: string | null;
+          status: "draft" | "published" | "archived";
           created_at: string;
         };
         Insert: Omit<
@@ -113,6 +116,7 @@ export interface Database {
           // columns with DB defaults or nullable — optional on insert
           | "id"
           | "created_at"
+          | "status"
           | "kind"
           | "listing_type"
           | "condition"
@@ -136,6 +140,7 @@ export interface Database {
               Database["public"]["Tables"]["products"]["Row"],
               | "id"
               | "created_at"
+              | "status"
               | "kind"
               | "listing_type"
               | "condition"
