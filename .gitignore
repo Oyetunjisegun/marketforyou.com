@@ -43,3 +43,7 @@ next-env.d.ts
 # windows
 desktop.ini
 Thumbs.db
+
+.vercel
+.env*
+!.env.example
